@@ -227,7 +227,7 @@ public class GeoMain {
 	        }
 		});
 
-		DataStream<JsonObject> stateMissMatch = geoAlert.keyBy(new KeySelector<JsonObject, String>() {
+		DataStream<JsonObject> stateMissMatch = geoAlertWM.keyBy(new KeySelector<JsonObject, String>() {
 			private static final long serialVersionUID = -4873366487571254798L;
 
 			@Override
@@ -235,8 +235,32 @@ public class GeoMain {
 				return value.get("assetDeviceSerialNumber").getAsString()
 						+ value.get("geoBoundaryAssetDeviceSerialNumber").getAsString();
 			}
-		}).window(TumblingEventTimeWindows.of(Time.seconds(5)))
-				.process(new AlertTypeProcessFunction());
+		}).window(TumblingEventTimeWindows.of(Time.seconds(5))).trigger(EventTimeTrigger.create())
+				.apply(new WindowFunction<JsonObject, JsonObject, String, TimeWindow>() {
+					private static final long serialVersionUID = 1L;
+					JsonObject priviousAlert;
+					@Override
+					public void apply(String key, TimeWindow window, Iterable<JsonObject> in, Collector<JsonObject> out)
+							throws Exception {
+						for (JsonObject value : in) {
+							String alert = value.get("alertType").getAsString();
+							
+							if (priviousAlert != null && alert.equalsIgnoreCase(priviousAlert.get("alertType").getAsString())) {
+								JsonObject obj = new JsonObject();
+								obj.addProperty("alertType", value.get("alertType").getAsString());
+								obj.addProperty("assetDeviceSerialNumber", value.get("assetDeviceSerialNumber").getAsString());
+								obj.addProperty("geoBoundaryAssetDeviceSerialNumber",
+										value.get("geoBoundaryAssetDeviceSerialNumber").getAsString());
+								obj.addProperty("make", value.get("make").getAsString());
+								obj.addProperty("eventTime", value.get("assetLocationTimestamp").getAsString());
+								obj.addProperty("priviousEventTime", priviousAlert.get("assetLocationTimestamp").getAsString());
+								out.collect(obj);
+							}
+							priviousAlert = value;
+						}
+					}
+
+				});
 
 		stateMissMatch.print();
 		
